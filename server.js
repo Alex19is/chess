@@ -73,6 +73,44 @@ app.put('/games/:gameId/slots.json', (req, res) => {
   res.status(200).end();
 });
 
+app.get('/games/:gameId/state.json', (req, res) => {
+  const file = path.join(ROOT, req.params.gameId, 'state.json');
+  if (!fs.existsSync(file)) return res.status(404).json({});
+  try {
+    res.json(JSON.parse(fs.readFileSync(file, 'utf8')));
+  } catch (e) {
+    res.status(404).json({});
+  }
+});
+
+app.put('/games/:gameId/state.json', (req, res) => {
+  const dir = path.join(ROOT, req.params.gameId);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'state.json');
+  const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+  fs.writeFileSync(file, JSON.stringify({ version: Math.max(0, parseInt(body.version, 10) || 0) }), 'utf8');
+  res.status(200).end();
+});
+
+app.get('/games/:gameId/undo_request.json', (req, res) => {
+  const file = path.join(ROOT, req.params.gameId, 'undo_request.json');
+  if (!fs.existsSync(file)) return res.json({});
+  try {
+    res.json(JSON.parse(fs.readFileSync(file, 'utf8')));
+  } catch (e) {
+    res.json({});
+  }
+});
+
+app.put('/games/:gameId/undo_request.json', (req, res) => {
+  const dir = path.join(ROOT, req.params.gameId);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'undo_request.json');
+  const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+  fs.writeFileSync(file, JSON.stringify({ from: body.from || null, atVersion: body.atVersion != null ? body.atVersion : null }), 'utf8');
+  res.status(200).end();
+});
+
 function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {

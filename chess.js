@@ -152,10 +152,17 @@ class SelfReplicatingChess {
                 }
             }
 
-            this.version = serverVersion;
+            let effectiveVersion = serverVersion;
+            if (fromServerOnly) {
+                try {
+                    const state = await fetch(`/games/${this.currentGame}/state.json`).then(r => r.ok ? r.json() : {});
+                    if (state.version != null) effectiveVersion = Math.min(serverVersion, Math.max(0, state.version));
+                } catch (e) {}
+            }
+            this.version = effectiveVersion;
             if (this.version > 0) {
-                const lastFile = this.moves[this.moves.length - 1];
-                const lastMove = await fetch(`/games/${this.currentGame}/moves/${lastFile}`).then(r => r.json());
+                const moveFile = this.moveFilename(this.version);
+                const lastMove = await fetch(`/games/${this.currentGame}/moves/${moveFile}`).then(r => r.json());
                 this.applyMoveData(lastMove);
                 this.moveCache[this.version] = lastMove;
             } else {
@@ -195,12 +202,92 @@ class SelfReplicatingChess {
         const interval = this.mySide ? 1000 : 3000;
         this._pollTimer = setInterval(async () => {
             const serverCount = await this.fetchServerMoveCount();
-            if (serverCount !== this.version) {
+            let stateVersion = null;
+            try {
+                const state = await fetch(`/games/${this.currentGame}/state.json`).then(r => r.ok ? r.json() : {});
+                stateVersion = state.version;
+            } catch (e) {}
+            const effectiveServer = stateVersion != null ? Math.min(serverCount, stateVersion) : serverCount;
+            if (effectiveServer !== this.version || serverCount !== this.moves.length) {
                 await this.loadGame(true);
                 this.render();
                 this.updateMoveSelector();
             }
+            this.updateUndoUI();
         }, interval);
+    }
+
+    async fetchUndoRequest() {
+        try {
+            const r = await fetch(`/games/${this.currentGame}/undo_request.json`);
+            return r.ok ? await r.json() : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    updateUndoUI() {
+        const wrap = document.getElementById('undoRequestWrap');
+        if (!wrap) return;
+        this.fetchUndoRequest().then(req => {
+            if (req.from && req.atVersion != null && req.from !== this.getSessionId()) {
+                wrap.style.display = 'block';
+                wrap.innerHTML = 'Opponent requests undo &nbsp;<button onclick="chess.acceptUndo()">Accept</button> <button onclick="chess.declineUndo()">Decline</button>';
+            } else {
+                wrap.style.display = 'none';
+            }
+        });
+    }
+
+    async requestUndo() {
+        if (!this.mySide || this.version <= 0) return;
+        try {
+            await fetch(`/games/${this.currentGame}/undo_request.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ from: this.getSessionId(), atVersion: this.version })
+            });
+            this.showMessage('Undo requested');
+        } catch (e) {
+            this.showMessage('Request failed');
+        }
+    }
+
+    async acceptUndo() {
+        try {
+            const req = await this.fetchUndoRequest();
+            if (!req.from || req.atVersion == null) return;
+            const newVersion = Math.max(0, req.atVersion - 1);
+            await fetch(`/games/${this.currentGame}/state.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ version: newVersion })
+            });
+            await fetch(`/games/${this.currentGame}/undo_request.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            await this.loadGame(true);
+            this.render();
+            this.updateMoveSelector();
+            document.getElementById('undoRequestWrap').style.display = 'none';
+            this.showMessage('Undo accepted');
+        } catch (e) {
+            this.showMessage('Failed');
+        }
+    }
+
+    async declineUndo() {
+        try {
+            await fetch(`/games/${this.currentGame}/undo_request.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            document.getElementById('undoRequestWrap').style.display = 'none';
+            this.showMessage('Undo declined');
+        } catch (e) {}
     }
 
     moveFilename(n) {
@@ -276,7 +363,12 @@ class SelfReplicatingChess {
             else if (this.mySide) sideEl.textContent = this.mySide === 'white' ? 'White' : 'Black';
             else sideEl.textContent = '';
         }
+        const reqUndoWrap = document.getElementById('requestUndoWrap');
+        if (reqUndoWrap) {
+            reqUndoWrap.style.display = (this.mySide && !this.canIMove() && this.version > 0) ? 'block' : 'none';
+        }
         this.updateMoveSelector();
+        this.updateUndoUI();
     }
 
     updateMoveSelector() {
@@ -415,9 +507,12 @@ class SelfReplicatingChess {
             return;
         }
         
-        // Проверить, можно ли сходить на выбранную клетку
-        if (this.validMoves.some(m => m.row === row && m.col === col)) {
-            this.makeMove(this.selectedSquare.row, this.selectedSquare.col, row, col);
+        const move = this.validMoves.find(m => m.row === row && m.col === col);
+        if (move) {
+            const special = {};
+            if (move.castling) special.castling = move.castling;
+            if (move.enPassant) special.enPassant = true;
+            this.makeMove(this.selectedSquare.row, this.selectedSquare.col, row, col, special);
         }
         
         // Снять выделение
@@ -600,25 +695,19 @@ class SelfReplicatingChess {
         
         const rights = isWhite ? this.castlingRights.white : this.castlingRights.black;
         
-        // Короткая рокировка (королевский фланг)
+        const kingCol = 4;
+        if (this.isSquareAttacked(row, kingCol, isWhite)) return;
+        
         if (rights.kingSide) {
-            // Проверяем, что клетки между королем и ладьей пусты
             if (!this.board[row][5] && !this.board[row][6]) {
-                // Проверяем, что король не проходит через битое поле
-                if (!this.isSquareAttacked(row, 5, isWhite) && 
-                    !this.isSquareAttacked(row, 6, isWhite)) {
+                if (!this.isSquareAttacked(row, 5, isWhite) && !this.isSquareAttacked(row, 6, isWhite)) {
                     moves.push({ row, col: 6, castling: 'king' });
                 }
             }
         }
-        
-        // Длинная рокировка (ферзевый фланг)
         if (rights.queenSide) {
-            // Проверяем, что клетки между королем и ладьей пусты
             if (!this.board[row][3] && !this.board[row][2] && !this.board[row][1]) {
-                // Проверяем, что король не проходит через битое поле
-                if (!this.isSquareAttacked(row, 3, isWhite) && 
-                    !this.isSquareAttacked(row, 2, isWhite)) {
+                if (!this.isSquareAttacked(row, 3, isWhite) && !this.isSquareAttacked(row, 2, isWhite)) {
                     moves.push({ row, col: 2, castling: 'queen' });
                 }
             }
@@ -895,10 +984,17 @@ class SelfReplicatingChess {
         } catch (e) {
             console.log('Move not saved to server');
         }
-        this.saveGameToStorage();
         if (this.mySide) {
+            try {
+                await fetch(`/games/${this.currentGame}/state.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ version: this.version })
+                });
+            } catch (e) {}
             await this.loadGame(true);
         }
+        this.saveGameToStorage();
         this.render();
     }
 
@@ -964,15 +1060,6 @@ class SelfReplicatingChess {
     }
 
     async exportSnapshot() {
-        const snapshot = {
-            gameId: this.currentGame,
-            version: this.version,
-            board: this.board,
-            currentPlayer: this.currentPlayer,
-            castlingRights: this.castlingRights,
-            enPassantTarget: this.enPassantTarget,
-            exportedAt: new Date().toISOString()
-        };
         const pieceSymbols = { 'r':'&#9820;','n':'&#9822;','b':'&#9821;','q':'&#9819;','k':'&#9818;','p':'&#9823;','R':'&#9814;','N':'&#9816;','B':'&#9815;','Q':'&#9813;','K':'&#9812;','P':'&#9817;' };
         let cells = '';
         for (let row = 0; row < 8; row++) {
@@ -983,14 +1070,14 @@ class SelfReplicatingChess {
                 cells += `<div style="width:50px;height:50px;display:flex;align-items:center;justify-content:center;font-size:36px;background:${bg}">${sym}</div>`;
             }
         }
-        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Chess snapshot - ${this.currentGame}</title></head><body style="font-family:sans-serif;padding:20px"><h1>Chess snapshot</h1><p>Game: ${this.currentGame}, Move: ${this.version}</p><div style="display:grid;grid-template-columns:repeat(8,50px);width:400px;border:2px solid #34495e">${cells}</div><pre style="margin-top:20px;font-size:12px">${JSON.stringify(snapshot, null, 2)}</pre></body></html>`;
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Chess</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#ddd"><div style="display:grid;grid-template-columns:repeat(8,50px);border:2px solid #34495e;box-shadow:0 4px 12px rgba(0,0,0,0.2)">${cells}</div></body></html>`;
         const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `chess_snapshot_${this.currentGame}_v${this.version}.html`;
+        a.download = `chess_${this.currentGame}_v${this.version}.html`;
         a.click();
         URL.revokeObjectURL(a.href);
-        this.showMessage('Snapshot saved as HTML file');
+        this.showMessage('Snapshot saved');
     }
 
     async syncWithPeer() {

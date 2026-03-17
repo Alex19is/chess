@@ -10,12 +10,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>&#9822; Self-Replicating Chess</h1>
-        <p class="subtitle">A quine: this game contains itself and can reproduce</p>
-        
         <div class="game-controls">
             <button onclick="chess.newGame()" title="Start a new game with a new ID">New Game</button>
-            <button onclick="chess.exportSnapshot()" title="Download current position as a single HTML file">&#128248; Export as Quine</button>
         </div>
 
         <div class="board-container">
@@ -32,29 +28,19 @@
                 <input type="range" id="moveSelector" min="0" max="0" value="0" step="1" title="Jump to any position">
                 <span id="moveSelectorLabel">0</span>
             </div>
+            <div id="undoRequestWrap" style="display:none; margin-top:8px; padding:8px; background:#fff3cd; border-radius:4px;"></div>
+            <div id="requestUndoWrap" style="display:none; margin-top:6px;">
+                <button type="button" onclick="chess.requestUndo()">Request undo</button>
+            </div>
         </div>
 
-        <div class="moves-history" id="moveHistory"></div>
-
-        <div class="quine-info">
-            <details>
-                <summary>&#128302; Quine Details (self-reference)</summary>
-                <pre id="quineManifest"></pre>
-            </details>
-        </div>
     </div>
 
     <script src="chess.js"></script>
     <script>
-        // Bootstrap: load current game from Beagle URL params
         const urlParams = new URLSearchParams(window.location.search);
         const gameId = urlParams.get('game') || 'template';
         document.getElementById('gameId').textContent = gameId;
-        
-        // Display manifest to prove self-reference
-        fetch('manifest.json')
-            .then(r => r.json())
-            .then(m => document.getElementById('quineManifest').textContent = JSON.stringify(m, null, 2));
     </script>
 </body>
 </html>
