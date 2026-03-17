@@ -1,0 +1,70 @@
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const ROOT = path.join(__dirname, 'games');
+
+app.use(express.json());
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/games/:gameId/moves/', (req, res) => {
+  const dir = path.join(ROOT, req.params.gameId, 'moves');
+  if (!fs.existsSync(dir)) {
+    return res.type('text/plain').send('');
+  }
+  const files = fs.readdirSync(dir).filter(f => /^\d{4}\.json$/.test(f)).sort();
+  res.type('text/plain').send(files.join('\n'));
+});
+
+app.get('/games/:gameId/moves/:filename', (req, res) => {
+  if (!/^\d{4}\.json$/.test(req.params.filename)) {
+    return res.status(400).end();
+  }
+  const file = path.join(ROOT, req.params.gameId, 'moves', req.params.filename);
+  if (!fs.existsSync(file)) {
+    return res.status(404).end();
+  }
+  res.sendFile(path.resolve(file));
+});
+
+app.put('/games/:gameId/moves/:filename', (req, res) => {
+  if (!/^\d{4}\.json$/.test(req.params.filename)) {
+    return res.status(400).end();
+  }
+  const dir = path.join(ROOT, req.params.gameId, 'moves');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, req.params.filename);
+  let body = req.body;
+  if (typeof body === 'object' && body !== null) {
+    body = JSON.stringify(body);
+  } else if (typeof body !== 'string') {
+    body = '';
+  }
+  fs.writeFileSync(file, body, 'utf8');
+  res.status(200).end();
+});
+
+function getLocalIP() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) return net.address;
+    }
+  }
+  return '?';
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  const ip = getLocalIP();
+  console.log(`Chess server running`);
+  console.log(`  Local:   http://localhost:${PORT}`);
+  console.log(`  Network: http://${ip}:${PORT}`);
+  console.log(`  From another device, open: http://${ip}:${PORT}`);
+});

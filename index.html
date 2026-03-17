@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>&#9822; Self-Replicating Chess</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <!-- Self-reference: this file knows it's part of a quine system -->
+    <meta name="beagle-path" content="/index.html">
+    <meta name="quine-version" content="1.0.0">
+</head>
+<body>
+    <div class="container">
+        <h1>&#9822; Self-Replicating Chess</h1>
+        <p class="subtitle">A quine: this game contains itself and can reproduce</p>
+        
+        <div class="game-controls">
+            <button onclick="chess.newGame()" title="Start a new game with a new ID">New Game</button>
+            <button onclick="chess.undo()" id="undoBtn" disabled title="Go back one move (can undo multiple times)">Undo move</button>
+            <button onclick="chess.replicate()" title="Copy this game to a new game and open it">&#9733; Replicate This Game</button>
+            <button onclick="chess.exportSnapshot()" title="Download current position as a single HTML file">&#128248; Export as Quine</button>
+            <button onclick="chess.syncWithPeer()" title="Reload game state from server">&#128260; Push/Pull</button>
+        </div>
+
+        <div class="board-container">
+            <div id="chessboard"></div>
+        </div>
+
+        <div class="game-info">
+            <div>Game ID: <span id="gameId">loading...</span></div>
+            <div>Version: <span id="gameVersion">1</span></div>
+            <div>Status: <span id="gameStatus">active</span></div>
+            <div class="move-selector-row">
+                <label for="moveSelector">Go to move:</label>
+                <input type="range" id="moveSelector" min="0" max="0" value="0" step="1" title="Jump to any position">
+                <span id="moveSelectorLabel">0</span>
+            </div>
+        </div>
+
+        <div class="moves-history" id="moveHistory"></div>
+
+        <div class="quine-info">
+            <details>
+                <summary>&#128302; Quine Details (self-reference)</summary>
+                <pre id="quineManifest"></pre>
+            </details>
+        </div>
+    </div>
+
+    <script src="chess.js"></script>
+    <script>
+        // Bootstrap: load current game from Beagle URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        const gameId = urlParams.get('game') || 'template';
+        document.getElementById('gameId').textContent = gameId;
+        
+        // Display manifest to prove self-reference
+        fetch('manifest.json')
+            .then(r => r.json())
+            .then(m => document.getElementById('quineManifest').textContent = JSON.stringify(m, null, 2));
+    </script>
+</body>
+</html>
