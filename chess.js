@@ -88,8 +88,8 @@ class SelfReplicatingChess {
         const params = new URLSearchParams(window.location.search);
         this.currentGame = params.get('game') || 'template';
         
-        await this.loadGame();
         await this.assignSide();
+        await this.loadGame(!!this.mySide);
         this.startPolling();
         this.render();
         this.setupEventListeners();
@@ -113,6 +113,7 @@ class SelfReplicatingChess {
     }
 
     saveGameToStorage() {
+        if (this.mySide) return;
         try {
             const data = { version: this.version, moveCache: this.moveCache, moves: this.moves };
             localStorage.setItem(this.storageKey(), JSON.stringify(data));
@@ -191,14 +192,15 @@ class SelfReplicatingChess {
 
     startPolling() {
         if (this._pollTimer) return;
+        const interval = this.mySide ? 1000 : 3000;
         this._pollTimer = setInterval(async () => {
             const serverCount = await this.fetchServerMoveCount();
-            if (serverCount > this.version) {
+            if (serverCount !== this.version) {
                 await this.loadGame(true);
                 this.render();
                 this.updateMoveSelector();
             }
-        }, 3000);
+        }, interval);
     }
 
     moveFilename(n) {
@@ -286,7 +288,7 @@ class SelfReplicatingChess {
         const maxVer = Math.max(this.version, this.moves.length);
         sel.max = maxVer;
         sel.value = this.version;
-        sel.disabled = maxVer <= 0;
+        sel.disabled = maxVer <= 0 || !!this.mySide;
         if (label) label.textContent = this.version;
     }
 
@@ -331,11 +333,14 @@ class SelfReplicatingChess {
         boardElement.style.gridTemplateRows = 'repeat(8, 70px)';
         boardElement.style.border = '3px solid #34495e';
         
-        for (let row = 0; row < 8; row++) {
-            for (let col = 0; col < 8; col++) {
+        const displayRows = this.mySide === 'black' ? [7,6,5,4,3,2,1,0] : [0,1,2,3,4,5,6,7];
+        const displayCols = this.mySide === 'black' ? [7,6,5,4,3,2,1,0] : [0,1,2,3,4,5,6,7];
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                const row = displayRows[i];
+                const col = displayCols[j];
                 const square = document.createElement('div');
                 
-                // Базовые стили
                 square.style.width = '70px';
                 square.style.height = '70px';
                 square.style.display = 'flex';
@@ -344,31 +349,20 @@ class SelfReplicatingChess {
                 square.style.fontSize = '48px';
                 square.style.cursor = 'pointer';
                 square.style.fontFamily = 'Arial, "Segoe UI", sans-serif';
-                
-                // Цвет клетки
                 square.style.backgroundColor = (row + col) % 2 === 0 ? '#f0d9b5' : '#b58863';
                 
-                // Дата-атрибуты
                 square.dataset.row = row;
                 square.dataset.col = col;
                 
-                // Подсветка выбранной клетки
-                if (this.selectedSquare && 
-                    this.selectedSquare.row === row && 
-                    this.selectedSquare.col === col) {
+                if (this.selectedSquare && this.selectedSquare.row === row && this.selectedSquare.col === col) {
                     square.style.boxShadow = 'inset 0 0 0 4px #e74c3c';
                 }
-                
-                // Подсветка возможных ходов
                 if (this.validMoves.some(m => m.row === row && m.col === col)) {
                     square.style.boxShadow = 'inset 0 0 0 4px #2ecc71';
                 }
                 
-                // Фигура
                 const piece = this.board[row][col];
-                if (piece) {
-                    square.innerHTML = this.getPieceSymbol(piece);
-                }
+                if (piece) square.innerHTML = this.getPieceSymbol(piece);
                 
                 boardElement.appendChild(square);
             }
@@ -904,6 +898,9 @@ class SelfReplicatingChess {
             console.log('Move not saved to server');
         }
         this.saveGameToStorage();
+        if (this.mySide) {
+            await this.loadGame(true);
+        }
         this.render();
     }
 
