@@ -273,11 +273,9 @@ class SelfReplicatingChess {
         const sideEl = document.getElementById('mySide');
         if (sideEl) {
             if (this.isSpectator) sideEl.textContent = 'Spectator';
-            else if (this.mySide) sideEl.textContent = 'You: ' + (this.mySide === 'white' ? 'White' : 'Black');
+            else if (this.mySide) sideEl.textContent = this.mySide === 'white' ? 'White' : 'Black';
             else sideEl.textContent = '';
         }
-        const undoBtn = document.getElementById('undoBtn');
-        if (undoBtn) undoBtn.disabled = this.version <= 0 || this.isSpectator || !!this.mySide;
         this.updateMoveSelector();
     }
 
@@ -288,7 +286,7 @@ class SelfReplicatingChess {
         const maxVer = Math.max(this.version, this.moves.length);
         sel.max = maxVer;
         sel.value = this.version;
-        sel.disabled = maxVer <= 0 || !!this.mySide;
+        sel.disabled = maxVer <= 0;
         if (label) label.textContent = this.version;
     }
 

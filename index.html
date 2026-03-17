@@ -15,10 +15,7 @@
         
         <div class="game-controls">
             <button onclick="chess.newGame()" title="Start a new game with a new ID">New Game</button>
-            <button onclick="chess.undo()" id="undoBtn" disabled title="Go back one move (can undo multiple times)">Undo move</button>
-            <button onclick="chess.replicate()" title="Copy this game to a new game and open it">&#9733; Replicate This Game</button>
             <button onclick="chess.exportSnapshot()" title="Download current position as a single HTML file">&#128248; Export as Quine</button>
-            <button onclick="chess.syncWithPeer()" title="Reload game state from server">&#128260; Push/Pull</button>
         </div>
 
         <div class="board-container">
