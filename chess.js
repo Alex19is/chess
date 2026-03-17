@@ -9,6 +9,8 @@ class SelfReplicatingChess {
         this.moves = [];
         this.version = 0;
         this.moveCache = {};
+        this.mySide = null;
+        this.isSpectator = false;
         this.selectedSquare = null;
         this.validMoves = [];
         this.currentPlayer = 'white';
@@ -39,12 +41,56 @@ class SelfReplicatingChess {
         this.init();
     }
 
+    getSessionId() {
+        let id = null;
+        try {
+            id = localStorage.getItem('chess_session_id');
+            if (!id) {
+                id = 's_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+                localStorage.setItem('chess_session_id', id);
+            }
+        } catch (e) {}
+        return id || 's_' + Date.now();
+    }
+
+    async assignSide() {
+        const sessionId = this.getSessionId();
+        const sideKey = 'chess_side_' + this.currentGame;
+        try {
+            const cached = localStorage.getItem(sideKey);
+            if (cached === 'white' || cached === 'black') {
+                const slots = await fetch(`/games/${this.currentGame}/slots.json`).then(r => r.ok ? r.json() : { white: null, black: null }).catch(() => ({ white: null, black: null }));
+                if ((slots.white === sessionId && cached === 'white') || (slots.black === sessionId && cached === 'black')) {
+                    this.mySide = cached;
+                    return;
+                }
+            }
+            let slots = await fetch(`/games/${this.currentGame}/slots.json`).then(r => r.ok ? r.json() : { white: null, black: null }).catch(() => ({ white: null, black: null }));
+            if (!slots.white && !slots.black) {
+                this.mySide = 'white';
+                await fetch(`/games/${this.currentGame}/slots.json`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ white: sessionId, black: null }) });
+            } else if (slots.white && !slots.black) {
+                this.mySide = 'black';
+                await fetch(`/games/${this.currentGame}/slots.json`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ white: slots.white, black: sessionId }) });
+            } else {
+                if (slots.white === sessionId) this.mySide = 'white';
+                else if (slots.black === sessionId) this.mySide = 'black';
+                else this.isSpectator = true;
+            }
+            if (this.mySide) localStorage.setItem(sideKey, this.mySide);
+        } catch (e) {
+            this.mySide = null;
+        }
+    }
+
     async init() {
         console.log('Init started');
         const params = new URLSearchParams(window.location.search);
         this.currentGame = params.get('game') || 'template';
         
         await this.loadGame();
+        await this.assignSide();
+        this.startPolling();
         this.render();
         this.setupEventListeners();
         this.setupMoveSelector();
@@ -85,18 +131,18 @@ class SelfReplicatingChess {
         }
     }
 
-    async loadGame() {
+    async loadGame(fromServerOnly) {
         try {
             this.moves = await this.discoverMoves();
             const serverVersion = this.moves.length;
-            const saved = this.loadGameFromStorage();
+            const saved = fromServerOnly ? null : this.loadGameFromStorage();
 
             if (saved && saved.moveCache && typeof saved.version === 'number') {
                 this.moveCache = saved.moveCache;
                 if (saved.moves && saved.moves.length > this.moves.length) {
                     this.moves = saved.moves.slice().sort();
                 }
-                this.version = Math.max(serverVersion, saved.version);
+                this.version = saved.version;
                 if (this.moveCache[this.version]) {
                     this.applyMoveData(this.moveCache[this.version]);
                     this.updateGameUI();
@@ -117,7 +163,7 @@ class SelfReplicatingChess {
             this.saveGameToStorage();
         } catch (e) {
             console.log('Using initial board:', e);
-            const saved = this.loadGameFromStorage();
+            const saved = fromServerOnly ? null : this.loadGameFromStorage();
             if (saved && saved.moveCache && saved.version > 0 && saved.moveCache[saved.version]) {
                 this.moveCache = saved.moveCache;
                 this.moves = saved.moves || [];
@@ -129,6 +175,30 @@ class SelfReplicatingChess {
             this.saveGameToStorage();
         }
         this.updateGameUI();
+    }
+
+    async fetchServerMoveCount() {
+        try {
+            const r = await fetch(`/games/${this.currentGame}/moves/`);
+            if (!r.ok) return this.version;
+            const text = await r.text();
+            const list = (text.match(/\d{4}\.json/g) || []).sort();
+            return list.length;
+        } catch (e) {
+            return this.version;
+        }
+    }
+
+    startPolling() {
+        if (this._pollTimer) return;
+        this._pollTimer = setInterval(async () => {
+            const serverCount = await this.fetchServerMoveCount();
+            if (serverCount > this.version) {
+                await this.loadGame(true);
+                this.render();
+                this.updateMoveSelector();
+            }
+        }, 3000);
     }
 
     moveFilename(n) {
@@ -152,6 +222,7 @@ class SelfReplicatingChess {
             this.castlingRights = { white: { kingSide: true, queenSide: true }, black: { kingSide: true, queenSide: true } };
             this.enPassantTarget = null;
             this.version = 0;
+            this.saveGameToStorage();
             this.updateGameUI();
             this.render();
             this.updateMoveSelector();
@@ -160,6 +231,7 @@ class SelfReplicatingChess {
         if (this.moveCache[atVersion]) {
             this.applyMoveData(this.moveCache[atVersion]);
             this.version = atVersion;
+            this.saveGameToStorage();
             this.updateGameUI();
             this.render();
             this.updateMoveSelector();
@@ -179,6 +251,7 @@ class SelfReplicatingChess {
             this.showMessage('Could not load move ' + atVersion);
             return;
         }
+        this.saveGameToStorage();
         this.updateGameUI();
         this.render();
         this.updateMoveSelector();
@@ -187,9 +260,22 @@ class SelfReplicatingChess {
     updateGameUI() {
         document.getElementById('gameId').textContent = this.currentGame;
         document.getElementById('gameVersion').textContent = this.version;
-        document.getElementById('gameStatus').textContent = this.currentPlayer;
+        const statusEl = document.getElementById('gameStatus');
+        if (statusEl) {
+            if (this.isSpectator) statusEl.textContent = 'Spectator (view only)';
+            else if (this.mySide) {
+                const turn = this.currentPlayer === this.mySide ? 'Your turn' : 'Waiting for opponent';
+                statusEl.textContent = turn;
+            } else statusEl.textContent = this.currentPlayer;
+        }
+        const sideEl = document.getElementById('mySide');
+        if (sideEl) {
+            if (this.isSpectator) sideEl.textContent = 'Spectator';
+            else if (this.mySide) sideEl.textContent = 'You: ' + (this.mySide === 'white' ? 'White' : 'Black');
+            else sideEl.textContent = '';
+        }
         const undoBtn = document.getElementById('undoBtn');
-        if (undoBtn) undoBtn.disabled = this.version <= 0;
+        if (undoBtn) undoBtn.disabled = this.version <= 0 || this.isSpectator || !!this.mySide;
         this.updateMoveSelector();
     }
 
@@ -305,13 +391,23 @@ class SelfReplicatingChess {
         });
     }
 
+    isPieceMine(piece) {
+        if (!this.mySide || !piece) return false;
+        return this.mySide === 'white' ? piece === piece.toUpperCase() : piece === piece.toLowerCase();
+    }
+
+    canIMove() {
+        if (this.isSpectator || !this.mySide) return false;
+        return this.currentPlayer === this.mySide;
+    }
+
     handleSquareClick(row, col) {
+        if (this.isSpectator) return;
         const piece = this.board[row][col];
         
-        // Если нет выбранной клетки
         if (!this.selectedSquare) {
-            // Можно выбрать только фигуру текущего игрока
-            if (piece && this.isPieceCurrentPlayer(piece)) {
+            if (!this.canIMove()) return;
+            if (piece && this.isPieceMine(piece)) {
                 this.selectedSquare = { row, col };
                 this.validMoves = this.getValidMoves(row, col);
                 this.render();

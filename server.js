@@ -51,6 +51,28 @@ app.put('/games/:gameId/moves/:filename', (req, res) => {
   res.status(200).end();
 });
 
+app.get('/games/:gameId/slots.json', (req, res) => {
+  const file = path.join(ROOT, req.params.gameId, 'slots.json');
+  if (!fs.existsSync(file)) {
+    return res.status(404).json({ white: null, black: null });
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    res.json(data);
+  } catch (e) {
+    res.status(404).json({ white: null, black: null });
+  }
+});
+
+app.put('/games/:gameId/slots.json', (req, res) => {
+  const dir = path.join(ROOT, req.params.gameId);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'slots.json');
+  const body = typeof req.body === 'object' && req.body !== null ? req.body : { white: null, black: null };
+  fs.writeFileSync(file, JSON.stringify({ white: body.white || null, black: body.black || null }), 'utf8');
+  res.status(200).end();
+});
+
 function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
